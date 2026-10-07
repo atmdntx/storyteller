@@ -42,6 +42,8 @@ struct FileTreeInspectorView: View {
     
     @Binding var selectedNode: SelectedNode?
     
+    @State private var expandedGroups: Set<UUID> = []
+    @State private var saveError: String?
     @State private var renamingGroup: ManuscriptGroup?
     @State private var renmateText = ""
     @State private var dropTargetGroupID: ManuscriptGroup.ID?
@@ -76,22 +78,21 @@ struct FileTreeInspectorView: View {
     var body: some View {
         VStack {
             List(selection: $selectedNode) {
-                OutlineGroup(rootNodes, children: \.children) { node in
-                    Group {
-                        switch node {
-                        case .group(let group): GroupNode(
-                            node: group,
-                            isManuscriptRoot: group.id == storybank.manuscriptRoot?.id,
-                            rootName: storybank.name,
-                            onHandleDrop: handleDrop,
-                            dropTargetGroupID: $dropTargetGroupID
-                        )
-                        case .document(let document): DocumentNode(node: document)
-                        }
-                    }
-                }
+                treeRows(rootNodes)
             }
             .listStyle(.sidebar)
+            .onChange(of: selectedNode, initial: true) { _, _ in
+                expandSelectedAncestors()
+            }
+            .alert("Could not save manuscript", isPresented: Binding(
+                get: { saveError != nil },
+                set: { if !$0 { saveError = nil } }
+            )) {
+                Button("Retry") { saveChanges() }
+                Button("Dismiss", role: .cancel) { saveError = nil }
+            } message: {
+                Text(saveError ?? "")
+            }
 
 
             .toolbar {
@@ -111,6 +112,53 @@ struct FileTreeInspectorView: View {
         }
     }
     
+    // Explicit expansion keeps a newly selected scene visible even when its
+    // parent (or an ancestor) was collapsed before creation.
+    private func treeRows(_ nodes: [TreeNode]) -> AnyView {
+        AnyView(ForEach(nodes) { node in
+            switch node {
+            case .group(let group):
+                DisclosureGroup(isExpanded: Binding(
+                    get: { expandedGroups.contains(group.id) },
+                    set: { expanded in
+                        if expanded { expandedGroups.insert(group.id) }
+                        else { expandedGroups.remove(group.id) }
+                    }
+                )) {
+                    treeRows(node.children ?? [])
+                } label: {
+                    GroupNode(
+                        node: group,
+                        isManuscriptRoot: group.id == storybank.manuscriptRoot?.id,
+                        rootName: storybank.name,
+                        onHandleDrop: handleDrop,
+                        dropTargetGroupID: $dropTargetGroupID
+                    )
+                }
+                .tag(SelectedNode.group(group.id))
+            case .document(let document):
+                DocumentNode(node: document)
+                    .tag(SelectedNode.document(document.id))
+            }
+        })
+    }
+
+    private func expandSelectedAncestors() {
+        var ancestor: ManuscriptGroup?
+        switch selectedNode {
+        case .document(let id):
+            ancestor = storybank.manuscriptDocuments.first { $0.id == id }?.group
+        case .group(let id):
+            ancestor = storybank.manuscriptGroups.first { $0.id == id }
+        case nil:
+            return
+        }
+        while let group = ancestor {
+            expandedGroups.insert(group.id)
+            ancestor = group.group
+        }
+    }
+
     private func createGroup(
         in storybank: Storybank,
         parent: ManuscriptGroup?
@@ -307,8 +355,9 @@ struct FileTreeInspectorView: View {
     private func saveChanges() {
         do {
             try modelContext.save()
+            saveError = nil
         } catch {
-            print("Failed to save changes:", error)
+            saveError = error.localizedDescription
         }
     }
 }
