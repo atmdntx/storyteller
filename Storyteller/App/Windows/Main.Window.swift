@@ -77,7 +77,7 @@ private struct MainWorkspaceView: View {
     
     var body: some View {
         switch selectedModule {
-        case .manuscript: ManuscriptView()
+        case .manuscript: ManuscriptView(storybank: storybank)
         case .characters: CharactersView()
         default: ContentUnavailableView("We are working on it!", systemImage: "hammer")
         }
